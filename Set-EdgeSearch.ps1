@@ -41,14 +41,25 @@
         "Ignored". If Ignored, the lock did not take on that machine.
 #>
 
-[CmdletBinding()]
 param(
-    [ValidateSet('google', 'duckduckgo', 'ddg', 'revert')]
     [string]$Engine,
     [switch]$Revert
 )
 
 $ErrorActionPreference = 'Stop'
+
+# When run via `irm ... | iex` the #Requires line is NOT enforced (that only
+# works for a real .ps1 file), so check for elevation ourselves.
+$isAdmin = ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host ""
+    Write-Host "  This needs an ELEVATED PowerShell (Run as Administrator)." -ForegroundColor Red
+    Write-Host "  Close this window, reopen PowerShell as Administrator, and run again." -ForegroundColor Yellow
+    Write-Host ""
+    return
+}
 
 # --- Paths / logging ---------------------------------------------------------
 $EdgePolicyKey  = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
@@ -95,12 +106,29 @@ $Engines = @{
 
 # --- Resolve the requested action -------------------------------------------
 # Precedence: -Revert switch / -Engine param  >  $env:NN_SEARCH  >  interactive prompt.
-$choice = $null
-if ($Revert)                { $choice = 'revert' }
-elseif ($Engine)            { $choice = $Engine.ToLower() }
-elseif ($env:NN_SEARCH)     { $choice = $env:NN_SEARCH.ToLower().Trim() }
+function Resolve-Choice {
+    param([string]$Raw)
+    switch -Regex (($Raw + '').ToLower().Trim()) {
+        '^(g|google)$'                 { 'google' ; break }
+        '^(d|ddg|duck|duckduckgo)$'    { 'duckduckgo' ; break }
+        '^(r|revert|undo)$'            { 'revert' ; break }
+        default                        { $null }   # unknown / empty
+    }
+}
 
-if ($choice -eq 'ddg') { $choice = 'duckduckgo' }
+$choice = $null
+if ($Revert)            { $choice = 'revert' }
+elseif ($Engine)        { $choice = Resolve-Choice $Engine }
+elseif ($env:NN_SEARCH) { $choice = Resolve-Choice $env:NN_SEARCH }
+
+# A non-empty but unrecognized value (e.g. NN_SEARCH='bing') should fail loudly,
+# not silently fall through to the interactive prompt.
+if (-not $choice -and ($Engine -or $env:NN_SEARCH)) {
+    Write-Host ""
+    Write-Host "  Unrecognized engine '$($Engine)$($env:NN_SEARCH)'. Use google, duckduckgo, or revert." -ForegroundColor Red
+    Write-Host ""
+    return
+}
 
 Write-Host ""
 Write-Host "  Nerdy Neighbor - Edge search engine lock" -ForegroundColor Cyan
@@ -146,7 +174,8 @@ if ($choice -eq 'revert') {
     Write-Host "  Done. Fully close and reopen Edge. The search engine is user-changeable again." -ForegroundColor Green
     Write-Host "  (If you enabled it, re-check Tamper Protection in Windows Security.)" -ForegroundColor Yellow
     Write-Host ""
-    exit 0
+    $global:LASTEXITCODE = 0
+    return
 }
 
 # ============================================================================
@@ -211,11 +240,13 @@ try {
     Write-Host "    * Undo anytime:  `$env:NN_SEARCH='revert'; irm edge.nerdyneighbor.net | iex" -ForegroundColor Gray
     Write-Host ""
     Write-Log "=== Done ($($e.Name)) ==="
-    exit 0
+    $global:LASTEXITCODE = 0
+    return
 }
 catch {
     Write-Log "Failed: $($_.Exception.Message)" 'ERROR'
     Write-Host ""
     Write-Host "  Something went wrong - see $LogFile" -ForegroundColor Red
-    exit 1
+    $global:LASTEXITCODE = 1
+    return
 }
