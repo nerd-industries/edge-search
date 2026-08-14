@@ -29,29 +29,43 @@ $env:NN_SEARCH = 'revert'
 irm edge.nerdyneighbor.net | iex
 ```
 
-## What it does
+## What it does (edition-aware)
 
-1. Writes a minimal **fake-MDM enrollment stub** so Edge treats the (unmanaged,
-   residential) PC as managed — this is what makes the search-provider policy
-   actually apply.
-2. Sets the **DefaultSearchProvider\*** policy to Google or DuckDuckGo. This is
-   the real fix: a policy is enforced silently and can't be reverted by clicking
-   Microsoft's popup.
-3. Sets the nag-suppression policies (`DefaultBrowserSettingsCampaignEnabled`,
-   `ShowRecommendationsEnabled`, `HideFirstRunExperience`,
-   `SpotlightExperiencesAndRecommendationsEnabled`).
-4. Verifies and logs to `C:\ProgramData\NerdyNeighbor\edge-search.log`.
+Always, on every edition — writes the **nag-suppression policies**
+(`DefaultBrowserSettingsCampaignEnabled`, `ShowRecommendationsEnabled`,
+`HideFirstRunExperience`, `SpotlightExperiencesAndRecommendationsEnabled`).
+These need no management and kill the "switch to Bing / recommended settings"
+popup — the thing that was reverting customers.
 
-**Always confirm at `edge://policy`** that the `DefaultSearchProvider*` rows show
-**Applied** (not Ignored) after a full Edge restart.
+Then it branches on the Windows edition:
+
+- **Pro / Education / Enterprise:** adds a minimal **fake-MDM enrollment stub**
+  so the `DefaultSearchProvider*` policy applies, then **locks** the engine to
+  your choice. The user can no longer change it.
+- **Windows Home:** Microsoft **blocks** `DefaultSearchProvider*` on Home and the
+  stub can't fake it — so the script does **not** write the stub (it's harmful
+  there) and does **not** write the blocked policy. It applies only the nag
+  suppression; with the popup gone, you set the engine once in Edge settings and
+  it stays.
+
+It also fully restarts Edge (all `msedge.exe`, not just the window) so the
+policies take effect, and logs to `C:\ProgramData\NerdyNeighbor\edge-search.log`.
+
+## Verify
+
+- **Pro/Edu/Ent:** `edge://policy` → `DefaultSearchProvider*` rows say **OK**
+  (not "Error / This policy is blocked"). If blocked, reboot once and re-check.
+- **Home:** those rows should be **absent**; set the engine at
+  `edge://settings/searchEngines` and confirm no Bing popup on relaunch.
 
 ## Caveats
 
-- Edge shows "managed by your organization" (cosmetic) and the search engine
-  becomes **locked** (user can't change it) — that's the point.
+- On Pro/Edu/Ent, Edge shows "managed by your organization" (cosmetic) and the
+  engine becomes **locked** (user can't change it) — that's the point.
 - The MDM stub can turn **off** Defender Tamper Protection; re-enable in Windows
-  Security if needed.
-- Windows **Home**: usually works, but verify at `edge://policy` per machine.
+  Security if needed. (Home path removes the stub and warns about this.)
+- Windows **Home cannot be hard-locked** — popup suppression + manual set is the
+  supported result there.
 
 ## Why not just "debloat" Edge?
 
